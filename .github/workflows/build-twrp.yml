@@ -1,0 +1,102 @@
+
+name: Build TWRP for OPPO A1601
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - ".github/workflows/build-twrp.yml"
+      - "README.md"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 360
+
+    steps:
+      - name: Free disk space
+        run: |
+          echo "Disk space before cleanup:"
+          df -h /
+          sudo rm -rf /usr/local/lib/android/sdk
+          sudo rm -rf /opt/hostedtoolcache/CodeQL
+          sudo docker image prune -af || true
+          sudo apt-get clean
+          echo "Disk space after cleanup:"
+          df -h /
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            git-core gnupg flex bison build-essential \
+            zip curl zlib1g-dev gcc-multilib g++-multilib \
+            libc6-dev-i386 lib32ncurses5-dev \
+            x11proto-core-dev libx11-dev lib32z1-dev \
+            libgl1-mesa-dev libxml2-utils xsltproc unzip \
+            fontconfig openjdk-8-jdk
+
+      - name: Set up Python 2
+        uses: actions/setup-python@v5
+        with:
+          python-version: "2.7.18"
+
+      - name: Install Repo tool
+        run: |
+          mkdir -p "$HOME/bin"
+          curl -fsSL \
+            https://storage.googleapis.com/git-repo-downloads/repo \
+            -o "$HOME/bin/repo"
+          chmod +x "$HOME/bin/repo"
+          echo "$HOME/bin" >> "$GITHUB_PATH"
+
+      - name: Initialize TWRP source
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/twrp"
+          cd "$GITHUB_WORKSPACE/twrp"
+
+          repo init --depth=1 \
+            -u https://github.com/minimal-manifest-twrp/platform_manifest_twrp_omni.git \
+            -b twrp-6.0
+
+      - name: Sync source
+        run: |
+          cd "$GITHUB_WORKSPACE/twrp"
+          repo sync -c --no-clone-bundle --no-tags -j2
+
+      - name: Add OPPO A1601 device tree
+        run: |
+          cd "$GITHUB_WORKSPACE/twrp"
+          mkdir -p device/oppo
+          git clone --depth=1 \
+            -b android-6.0 \
+            https://github.com/FarizGD/twrp_oppo_A1601.git \
+            device/oppo/A1601
+
+          echo "Device tree files:"
+          ls -la device/oppo/A1601
+
+      - name: Build recovery
+        run: |
+          cd "$GITHUB_WORKSPACE/twrp"
+
+          export ALLOW_MISSING_DEPENDENCIES=true
+          export USE_CCACHE=1
+          export CCACHE_DIR="$GITHUB_WORKSPACE/.ccache"
+
+          . build/envsetup.sh
+          lunch omni_A1601-eng
+          mka recoveryimage -j2
+
+      - name: Upload recovery image
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: TWRP-OPPO-A1601
+          path: |
+            twrp/out/target/product/A1601/recovery.img
+          if-no-files-found: error
+          retention-days: 14
